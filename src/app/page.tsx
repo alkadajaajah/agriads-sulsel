@@ -1,5 +1,5 @@
 'use client';
-
+import { supabase } from './supabaseClient';
 import { useState, useEffect } from 'react';
 
 interface Listing {
@@ -251,7 +251,7 @@ export default function Home() {
   const [negotiatedPrice, setNegotiatedPrice] = useState('');
   const [negoNotes, setNegoNotes] = useState('');
 
-  useEffect(() => {
+ useEffect(() => {
     setMounted(true);
     setIsOnline(navigator.onLine);
     const handleOnline = () => setIsOnline(true);
@@ -260,17 +260,51 @@ export default function Home() {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    const savedData = localStorage.getItem('agriads_sulsel_core_data');
-    if (savedData) {
-      try {
-        const parsed: Listing[] = JSON.parse(savedData);
-        setListings(parsed);
-      } catch (e) {
-        console.error('Gagal memuat cache lokal');
+    // Ambil data dari Supabase
+    const fetchListings = async () => {
+      const { data, error } = await supabase
+        .from('listings')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Gagal memuat data dari Supabase:', error);
+      } else if (data && data.length > 0) {
+        // Petakan kolom database ke interface Listing frontend
+        const mappedListings: Listing[] = data.map((item: any) => ({
+          id: item.id,
+          title: item.title,
+          category: item.category,
+          type: item.type,
+          price: item.price,
+          location: item.location,
+          contact: item.contact,
+          fullName: item.full_name,
+          nickname: item.nickname,
+          nik: item.nik,
+          fullAddress: item.full_address,
+          addressStatus: item.address_status,
+          desc: item.desc,
+          date: item.date,
+          unitType: item.unit_type,
+          images: item.images,
+          status: item.status,
+          paymentPackage: item.payment_package,
+          paymentProof: item.payment_proof,
+          createdAt: item.created_at,
+          isRecommended: item.is_recommended,
+          viewCount: item.view_count,
+          ownerPassword: item.owner_password,
+          isNegotiable: item.is_negotiable
+        }));
+        setListings(mappedListings);
+      } else {
+        // Jika tabel kosong, masukkan data default
+        setListings(defaultListings);
       }
-    } else {
-      localStorage.setItem('agriads_sulsel_core_data', JSON.stringify(defaultListings));
-    }
+    };
+
+    fetchListings();
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -356,7 +390,7 @@ export default function Home() {
     }
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!formTitle.trim() || !formPriceNumber.trim() || !formContact.trim() || !formFullName.trim() || !formNik.trim() || !formAddressDetail.trim() || !formOwnerPassword.trim()) {
@@ -364,22 +398,21 @@ export default function Home() {
       return;
     }
 
-    // --- VALIDASI KETAT SESUAI PERMINTAAN ---
-    // 1. Validasi Password Pengiklan (PIN Edit): Tepat 4 digit angka, tidak boleh lebih/kurang, tanpa karakter lain
+    // Validasi PIN Edit (Tepat 4 angka)
     const pinRegex = /^\d{4}$/;
     if (!pinRegex.test(formOwnerPassword)) {
       alert('Password / PIN Edit pengiklan wajib diisi tepat 4 angka (contoh: 1234)!');
       return;
     }
 
-    // 2. Validasi No HP: Angka saja, panjang 10 hingga 13 digit
+    // Validasi No HP (10-13 digit)
     const phoneRegex = /^\d{10,13}$/;
     if (!phoneRegex.test(formContact)) {
       alert('Nomor WhatsApp / HP harus berupa angka dengan panjang antara 10 hingga 13 digit!');
       return;
     }
 
-    // 3. Validasi No KTP (NIK): Tepat 16 digit angka
+    // Validasi NIK KTP (16 digit)
     if (formNik.length !== 16 || !/^\d+$/.test(formNik)) {
       alert('Nomor KTP (NIK) harus tepat 16 digit angka!');
       return;
@@ -387,9 +420,48 @@ export default function Home() {
 
     const formattedPrice = `Rp ${formPriceNumber} /${formUnitType}`;
     const combinedAddress = `${formLocation} — ${formAddressDetail}`;
+    const currentTime = Date.now();
+    const newId = currentTime; // Gunakan timestamp sebagai ID unik
 
-    const newEntry: Listing = {
-      id: Date.now(),
+    const newDbEntry = {
+      id: newId,
+      title: formTitle,
+      category: formCategory,
+      type: formType,
+      price: formattedPrice,
+      location: formLocation,
+      contact: formContact,
+      full_name: formFullName,
+      nickname: formFullName.split(' ')[0],
+      nik: formNik,
+      full_address: combinedAddress,
+      address_status: 'approved',
+      desc: formDesc,
+      date: new Date().toISOString().split('T')[0],
+      unit_type: formUnitType,
+      images: formImages,
+      status: 'pending',
+      payment_package: formPackage,
+      payment_proof: formPaymentProof,
+      created_at: currentTime,
+      is_recommended: formPackage.includes('VIP') || formPackage.includes('Bump Up'),
+      view_count: 1,
+      owner_password: formOwnerPassword,
+      is_negotiable: formIsNegotiable
+    };
+
+    // Kirim ke Supabase
+    const { error } = await supabase.from('listings').insert([newDbEntry]);
+
+    if (error) {
+      console.error('Gagal menyimpan ke Supabase:', error);
+      alert('Terjadi kesalahan saat menyimpan iklan ke database.');
+      return;
+    }
+
+    // Perbarui state lokal agar langsung tampil tanpa refresh
+    const localNewEntry: Listing = {
+      id: newId,
       title: formTitle,
       category: formCategory,
       type: formType,
@@ -397,7 +469,7 @@ export default function Home() {
       location: formLocation,
       contact: formContact,
       fullName: formFullName,
-      nickname: formNickname || formFullName.split(' ')[0],
+      nickname: formFullName.split(' ')[0],
       nik: formNik,
       fullAddress: combinedAddress,
       addressStatus: 'approved',
@@ -408,22 +480,21 @@ export default function Home() {
       status: 'pending',
       paymentPackage: formPackage,
       paymentProof: formPaymentProof,
+      createdAt: currentTime,
       isRecommended: formPackage.includes('VIP') || formPackage.includes('Bump Up'),
       viewCount: 1,
       ownerPassword: formOwnerPassword,
-      isNegotiable: formIsNegotiable,
-      createdAt: Date.now()
+      isNegotiable: formIsNegotiable
     };
 
-    const updated = [newEntry, ...listings];
-    saveListings(updated);
+    setListings([localNewEntry, ...listings]);
     setShowInputModal(false);
     
+    // Reset Form
     setFormTitle('');
     setFormPriceNumber('');
     setFormContact('');
     setFormFullName('');
-    setFormNickname('');
     setFormNik('');
     setFormAddressDetail('');
     setFormDesc('');
@@ -431,7 +502,8 @@ export default function Home() {
     setFormPaymentProof('');
     setFormOwnerPassword('');
     setFormIsNegotiable(true);
-    alert('Iklan berhasil dikirim dan kini masuk antrean kurasi admin! Simpan 4 angka password Anda untuk keperluan edit iklan.');
+    
+    alert('Iklan berhasil dikirim ke database Supabase dan masuk antrean kurasi admin!');
   };
 
   const handleVerifyAuthForEdit = (e: React.FormEvent) => {
